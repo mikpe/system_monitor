@@ -169,6 +169,7 @@ connect_options() ->
     password => application:get_env(?APP, db_password, "system_monitor_password"),
     database => application:get_env(?APP, db_name, "system_monitor"),
     timeout => application:get_env(?APP, db_connection_timeout, 5000),
+    ssl => application:get_env(?APP, db_ssl, false),
     codecs => []}.
 
 log_failed_connection() ->
