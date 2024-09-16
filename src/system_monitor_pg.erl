@@ -191,9 +191,15 @@ create_partition_tables(Conn, Day) ->
   To = to_postgres_date(Day + 1),
   lists:foreach(fun(Table) ->
                    Query = create_partition_query(Table, Day, From, To),
-                   [{ok, [], []}, {ok, [], []}] = epgsql:squery(Conn, Query)
+                   check_create_result(epgsql:squery(Conn, Query))
                 end,
                 Tables).
+
+check_create_result(Result) ->
+  case Result of
+    [{ok, [], []}, {ok, [], []}] -> ok;
+    {error, {error, error, _, duplicate_table, _, _}} -> ok
+  end.
 
 delete_partition_tables(Conn, Day) ->
   Tables = [<<"prc">>, <<"app_top">>, <<"fun_top">>, <<"node_role">>],
