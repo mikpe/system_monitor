@@ -43,7 +43,11 @@
 
 %%%_* API =================================================================
 produce(Type, Events) ->
-  gen_server:cast(?SERVER, {produce, Type, Events}).
+  MaxMsgQueueSize = application:get_env(?APP, max_message_queue_len, 100),
+  case process_info(whereis(?SERVER), message_queue_len) of
+    {_, N} when N > MaxMsgQueueSize -> ok;
+    _ -> gen_server:cast(?SERVER, {produce, Type, Events})
+  end.
 
 %%%_* Callbacks =================================================================
 start_link() ->
@@ -88,16 +92,9 @@ handle_info(reinitialize, State) ->
 handle_cast({produce, Type, Events}, #{connection := undefined, buffer := Buffer} = State) ->
   {noreply, State#{buffer => buffer_add(Buffer, {Type, Events})}};
 handle_cast({produce, Type, Events}, #{connection := Conn, buffer := Buffer} = State) ->
-  MaxMsgQueueSize = application:get_env(?APP, max_message_queue_len, 1000),
-  case process_info(self(), message_queue_len) of
-    {_, N} when N > MaxMsgQueueSize ->
-      {noreply, State};
-    _ ->
-      lists:foreach(fun({Type0, Events0}) ->
-                      run_query(Conn, Type0, Events0)
-                    end, buffer_to_list(buffer_add(Buffer, {Type, Events}))),
-      {noreply, State#{buffer => buffer_new()}}
-  end.
+  lists:foreach(fun({Type0, Events0}) -> run_query(Conn, Type0, Events0) end,
+                buffer_to_list(buffer_add(Buffer, {Type, Events}))),
+  {noreply, State#{buffer => buffer_new()}}.
 
 format_status(Status = #{reason := _Reason, state := State}) ->
   Status#{state => State#{buffer => buffer_new()}};
@@ -136,10 +133,14 @@ run_query(Conn, Type, Events) ->
   {ok, Statement} = epgsql:parse(Conn, query(Type)),
   Batch = [{Statement, params(Type, I)} || I <- Events],
   Results = epgsql:execute_batch(Conn, Batch),
-  %% Crash on failure
   lists:foreach(fun ({ok, _}) ->
                       ok;
                     ({ok, _, _}) ->
+                      ok;
+                    (Other) ->
+                      ?LOG_WARNING("Failed to complete query. Error: ~p~n",
+                                   [Other],
+                                   #{domain => [system_monitor]}),
                       ok
                 end,
                 Results).
@@ -205,7 +206,14 @@ delete_partition_tables(Conn, Day) ->
   Tables = [<<"prc">>, <<"app_top">>, <<"fun_top">>, <<"node_role">>],
   lists:foreach(fun(Table) ->
                    Query = delete_partition_query(Table, Day),
-                   {ok, [], []} = epgsql:squery(Conn, Query)
+                   case epgsql:squery(Conn, Query) of
+                     {ok, [], []} -> ok;
+                     Other ->
+                       ?LOG_WARNING("Failed to delete partition. Error: ~p~n",
+                                    [Other],
+                                    #{domain => [system_monitor]}),
+                       ok
+                   end
                 end,
                 Tables).
 
