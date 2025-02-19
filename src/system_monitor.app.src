@@ -74,5 +74,17 @@
 
       %% Don't query memory if message_queue_len is longer than this:
     , {mql_limit_for_memory, 100000}
+
+      %% Postgres connection options
+    , {db_hostname, "localhost"}
+    , {db_post, 5432}
+    , {db_username, "system_monitor"}
+    , {db_password, "system_monitor_password"}
+    , {db_database, "system_monitor"}
+    , {db_timeout, 5000}
+
+      %% Password function. Takes three parameters: Host, Port, and
+      %% Username, as given in the above db_* app envs.
+    , {db_password_fun, undefined}
     ]}
  ]}.

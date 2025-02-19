@@ -24,6 +24,7 @@
         , handle_cast/2
         , format_status/1
         , terminate/2
+        , connect_options/0
         ]).
 
 -if(?OTP_RELEASE < 27).
@@ -164,13 +165,27 @@ connect() ->
   end.
 
 connect_options() ->
-  #{host => application:get_env(?APP, db_hostname, "localhost"),
-    port => application:get_env(?APP, db_port, 5432),
-    username => application:get_env(?APP, db_username, "system_monitor"),
-    password => application:get_env(?APP, db_password, "system_monitor_password"),
-    database => application:get_env(?APP, db_name, "system_monitor"),
-    timeout => application:get_env(?APP, db_connection_timeout, 5000),
-    ssl => application:get_env(?APP, db_ssl, false),
+  Hostname = application:get_env(?APP, db_hostname, "localhost"),
+  Port = application:get_env(?APP, db_port, 5432),
+  Username = application:get_env(?APP, db_username, "system_monitor"),
+  Database = application:get_env(?APP, db_name, "system_monitor"),
+  Timeout = application:get_env(?APP, db_connection_timeout, 5000),
+  Ssl = application:get_env(?APP, db_ssl, false),
+  Password =
+    case application:get_env(?APP, db_password_fun) of
+      {ok, Fun} when is_function(Fun, 3) ->
+        Fun(Hostname, Port, Username);
+      _ ->
+        application:get_env(?APP, db_password, "system_monitor_password")
+    end,
+
+  #{host => Hostname,
+    port => Port,
+    username => Username,
+    password => Password,
+    database => Database,
+    timeout => Timeout,
+    ssl => Ssl,
     codecs => []}.
 
 log_failed_connection() ->
