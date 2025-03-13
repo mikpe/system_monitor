@@ -178,15 +178,19 @@ connect_options() ->
       _ ->
         application:get_env(?APP, db_password, "system_monitor_password")
     end,
-
-  #{host => Hostname,
-    port => Port,
-    username => Username,
-    password => Password,
-    database => Database,
-    timeout => Timeout,
-    ssl => Ssl,
-    codecs => []}.
+  Options =
+    #{host => Hostname,
+      port => Port,
+      username => Username,
+      password => Password,
+      database => Database,
+      timeout => Timeout,
+      ssl => Ssl,
+      codecs => []},
+  case Ssl of
+    true -> Options#{ssl_opts => [{verify, verify_none}]};
+    false -> Options
+  end.
 
 log_failed_connection() ->
   ?LOG_WARNING("Failed to open connection to the DB.", [], #{domain => [system_monitor]}).
