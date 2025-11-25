@@ -7,7 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased] - yyyy-mm-dd
 
+## [2.3.0] - 2025-11-25
+
+Update proper
+Improve ssl handling on OTP-26
+Add callback function for retrieving password
+Reduce risk for OOM
+Avoid crashing on expected errors
+Enable configurable ssl option when connecting
+Fix warnings with OTP-27
+Remove outdated docs
+Allow configuring the node name
+Update CI
+Do not divide MaxProcs by 5
+
+## [2.2.6] - 2023-02-06
+
+CI updates
+Remove usage of hut
+Fix sql bug
 Batch insert operations in postgres backend.
+Improve failure handling
+Update epgsql
+Do not stop producer when restarting
+
+## [2.2.5] - 2023-01-27
+
+Start the producer from the supervisor
+
+## [2.2.4] - 2022-12-05
+
+Stop system monitor callback on system monitor stop
+
+## [2.2.3] - 2022-12-01
+
+Sort deltas before returning
 
 ## [2.2.2] - 2022-11-29
 
