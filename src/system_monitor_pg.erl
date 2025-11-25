@@ -24,6 +24,7 @@
         , handle_cast/2
         , format_status/1
         , terminate/2
+        , connect_options/0
         ]).
 
 -if(?OTP_RELEASE < 27).
@@ -43,7 +44,11 @@
 
 %%%_* API =================================================================
 produce(Type, Events) ->
-  gen_server:cast(?SERVER, {produce, Type, Events}).
+  MaxMsgQueueSize = application:get_env(?APP, max_message_queue_len, 100),
+  case process_info(whereis(?SERVER), message_queue_len) of
+    {_, N} when N > MaxMsgQueueSize -> ok;
+    _ -> gen_server:cast(?SERVER, {produce, Type, Events})
+  end.
 
 %%%_* Callbacks =================================================================
 start_link() ->
@@ -88,16 +93,9 @@ handle_info(reinitialize, State) ->
 handle_cast({produce, Type, Events}, #{connection := undefined, buffer := Buffer} = State) ->
   {noreply, State#{buffer => buffer_add(Buffer, {Type, Events})}};
 handle_cast({produce, Type, Events}, #{connection := Conn, buffer := Buffer} = State) ->
-  MaxMsgQueueSize = application:get_env(?APP, max_message_queue_len, 1000),
-  case process_info(self(), message_queue_len) of
-    {_, N} when N > MaxMsgQueueSize ->
-      {noreply, State};
-    _ ->
-      lists:foreach(fun({Type0, Events0}) ->
-                      run_query(Conn, Type0, Events0)
-                    end, buffer_to_list(buffer_add(Buffer, {Type, Events}))),
-      {noreply, State#{buffer => buffer_new()}}
-  end.
+  lists:foreach(fun({Type0, Events0}) -> run_query(Conn, Type0, Events0) end,
+                buffer_to_list(buffer_add(Buffer, {Type, Events}))),
+  {noreply, State#{buffer => buffer_new()}}.
 
 format_status(Status = #{reason := _Reason, state := State}) ->
   Status#{state => State#{buffer => buffer_new()}};
@@ -136,10 +134,14 @@ run_query(Conn, Type, Events) ->
   {ok, Statement} = epgsql:parse(Conn, query(Type)),
   Batch = [{Statement, params(Type, I)} || I <- Events],
   Results = epgsql:execute_batch(Conn, Batch),
-  %% Crash on failure
   lists:foreach(fun ({ok, _}) ->
                       ok;
                     ({ok, _, _}) ->
+                      ok;
+                    (Other) ->
+                      ?LOG_WARNING("Failed to complete query. Error: ~p~n",
+                                   [Other],
+                                   #{domain => [system_monitor]}),
                       ok
                 end,
                 Results).
@@ -163,13 +165,32 @@ connect() ->
   end.
 
 connect_options() ->
-  #{host => application:get_env(?APP, db_hostname, "localhost"),
-    port => application:get_env(?APP, db_port, 5432),
-    username => application:get_env(?APP, db_username, "system_monitor"),
-    password => application:get_env(?APP, db_password, "system_monitor_password"),
-    database => application:get_env(?APP, db_name, "system_monitor"),
-    timeout => application:get_env(?APP, db_connection_timeout, 5000),
-    codecs => []}.
+  Hostname = application:get_env(?APP, db_hostname, "localhost"),
+  Port = application:get_env(?APP, db_port, 5432),
+  Username = application:get_env(?APP, db_username, "system_monitor"),
+  Database = application:get_env(?APP, db_name, "system_monitor"),
+  Timeout = application:get_env(?APP, db_connection_timeout, 5000),
+  Ssl = application:get_env(?APP, db_ssl, false),
+  Password =
+    case application:get_env(?APP, db_password_fun) of
+      {ok, Fun} when is_function(Fun, 3) ->
+        Fun(Hostname, Port, Username);
+      _ ->
+        application:get_env(?APP, db_password, "system_monitor_password")
+    end,
+  Options =
+    #{host => Hostname,
+      port => Port,
+      username => Username,
+      password => Password,
+      database => Database,
+      timeout => Timeout,
+      ssl => Ssl,
+      codecs => []},
+  case Ssl of
+    true -> Options#{ssl_opts => [{verify, verify_none}]};
+    false -> Options
+  end.
 
 log_failed_connection() ->
   ?LOG_WARNING("Failed to open connection to the DB.", [], #{domain => [system_monitor]}).
@@ -190,15 +211,28 @@ create_partition_tables(Conn, Day) ->
   To = to_postgres_date(Day + 1),
   lists:foreach(fun(Table) ->
                    Query = create_partition_query(Table, Day, From, To),
-                   [{ok, [], []}, {ok, [], []}] = epgsql:squery(Conn, Query)
+                   check_create_result(epgsql:squery(Conn, Query))
                 end,
                 Tables).
+
+check_create_result(Result) ->
+  case Result of
+    [{ok, [], []}, {ok, [], []}] -> ok;
+    {error, {error, error, _, duplicate_table, _, _}} -> ok
+  end.
 
 delete_partition_tables(Conn, Day) ->
   Tables = [<<"prc">>, <<"app_top">>, <<"fun_top">>, <<"node_role">>],
   lists:foreach(fun(Table) ->
                    Query = delete_partition_query(Table, Day),
-                   {ok, [], []} = epgsql:squery(Conn, Query)
+                   case epgsql:squery(Conn, Query) of
+                     {ok, [], []} -> ok;
+                     Other ->
+                       ?LOG_WARNING("Failed to delete partition. Error: ~p~n",
+                                    [Other],
+                                    #{domain => [system_monitor]}),
+                       ok
+                   end
                 end,
                 Tables).
 
